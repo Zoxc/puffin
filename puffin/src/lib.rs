@@ -347,6 +347,7 @@ pub fn global_reporter(info: ThreadInfo, stream_info: &StreamInfoRef<'_>) {
 pub struct ThreadProfiler {
     stream_info: StreamInfo,
     /// Current depth.
+    enabled: bool,
     depth: usize,
     now_ns: NsSource,
     reporter: ThreadReporter,
@@ -357,6 +358,7 @@ impl Default for ThreadProfiler {
     fn default() -> Self {
         Self {
             stream_info: Default::default(),
+            enabled: true,
             depth: 0,
             now_ns: crate::now_ns,
             reporter: global_reporter,
@@ -380,9 +382,25 @@ impl ThreadProfiler {
         });
     }
 
+    pub fn disable<R>(f: impl FnOnce() -> R) -> R {
+        let old = ThreadProfiler::call(|tp| {
+            let old = tp.enabled;
+            tp.enabled = false;
+            old
+        });
+        let r = f();
+        ThreadProfiler::call(|tp| {
+            tp.enabled = old;
+        });
+        r
+    }
+
     /// Returns position where to write scope size once the scope is closed.
     #[must_use]
     pub fn begin_scope(&mut self, id: &str, location: &str, data: &str) -> usize {
+        if !self.enabled {
+            return 0;
+        };
         let now_ns = (self.now_ns)();
         self.start_time_ns = Some(self.start_time_ns.unwrap_or(now_ns));
 
@@ -395,6 +413,9 @@ impl ThreadProfiler {
     }
 
     pub fn end_scope(&mut self, start_offset: usize) {
+        if !self.enabled {
+            return;
+        };
         let now_ns = (self.now_ns)();
         self.stream_info.depth = self.stream_info.depth.max(self.depth);
         self.stream_info.num_scopes += 1;
